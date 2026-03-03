@@ -57,4 +57,3 @@ ai-movie-insight-builder/
     sentiment.test.ts
 
 
-ai api=AIzaSyATu-TMwISNkzLAsP36GVOQ5e4J80vITjU
