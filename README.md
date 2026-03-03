@@ -34,3 +34,27 @@ You can check out [the Next.js GitHub repository](https://github.com/vercel/next
 The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
 
 Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+
+
+ai-movie-insight-builder/
+  package.json
+  tsconfig.json
+  next.config.mjs
+  .env.local
+  jest.config.cjs
+  jest.setup.ts
+  src/
+    app/
+      layout.tsx
+      page.tsx
+      globals.css
+      api/
+        movie/route.ts
+        sentiment/route.ts
+    lib/
+      sentiment.ts
+  __tests__/
+    sentiment.test.ts
+
+
+ai api=AIzaSyATu-TMwISNkzLAsP36GVOQ5e4J80vITjU
