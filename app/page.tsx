@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 
 interface MovieResponse {
   imdbID: string;
@@ -49,10 +49,7 @@ const sentimentPalette = {
   mixed: { label: "Mixed", color: "#f59e0b", bg: "#fef3c7" }
 };
 
-const recentSamples = [
-  { title: "Inception", status: "Positive", ago: "2m ago", poster: "https://image.tmdb.org/t/p/w200/qmDpIHrmpJINaRKAfWQfftjCdyi.jpg" },
-  { title: "The Shawshank Redemption", status: "Positive", ago: "1h ago", poster: "https://image.tmdb.org/t/p/w200/q6y0Go1tsGEsmtFryDOJo3dEmqu.jpg" }
-];
+
 
 const analyzedReviewsFallback: Review[] = [];
 
@@ -65,9 +62,8 @@ export default function HomePage() {
   const [loading, setLoading] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [apiError, setApiError] = useState<string | null>(null);
-  const [recent, setRecent] = useState(
-    recentSamples.map((r) => ({ ...r, imdbID: "" }))
-  );
+  const [expandedReviews, setExpandedReviews] = useState<Record<string, boolean>>({});
+  const [formattedDates, setFormattedDates] = useState<Record<string, string>>({});
 
   const topicStats = useMemo(() => {
     const counts: Record<string, number> = {};
@@ -112,18 +108,21 @@ export default function HomePage() {
     setAiSummary(null);
 
     const trimmed = imdbID.trim();
+    const imdbPattern = /^tt\d{7,}$/;
     if (!trimmed) {
       setFormError("Please enter an IMDb ID (e.g., tt0133093).");
       return;
     }
-    if (!/^tt\d+$/.test(trimmed)) {
-      setFormError("Invalid IMDb ID format. It should look like tt followed by digits.");
+    if (!imdbPattern.test(trimmed)) {
+      setFormError("Invalid IMDb ID format. Expected tt followed by at least 7 digits (e.g., tt0133093).");
       return;
     }
 
     setLoading(true);
     try {
-      const movieRes = await fetch(`/api/movie?imdbID=${encodeURIComponent(trimmed)}`);
+      const movieRes = await fetch(`/api/movie?imdbID=${encodeURIComponent(trimmed)}`, {
+        cache: "no-store"
+      });
       if (!movieRes.ok) {
         const err = await movieRes.json().catch(() => ({}));
         throw new Error(err.error ?? "Failed to fetch movie details.");
@@ -131,7 +130,9 @@ export default function HomePage() {
       const movieJson = (await movieRes.json()) as MovieResponse;
       setMovie(movieJson);
 
-      const sentRes = await fetch(`/api/sentiment?imdbID=${encodeURIComponent(trimmed)}`);
+      const sentRes = await fetch(`/api/sentiment?imdbID=${encodeURIComponent(trimmed)}`, {
+        cache: "no-store"
+      });
       if (!sentRes.ok) {
         const err = await sentRes.json().catch(() => ({}));
         throw new Error(err.error ?? "Failed to fetch and summarize audience sentiment.");
@@ -139,7 +140,9 @@ export default function HomePage() {
       const sentJson = (await sentRes.json()) as SentimentResponse;
       setSentiment(sentJson);
 
-      const reviewsRes = await fetch(`/api/reviews?imdbID=${encodeURIComponent(trimmed)}`);
+      const reviewsRes = await fetch(`/api/reviews?imdbID=${encodeURIComponent(trimmed)}`, {
+        cache: "no-store"
+      });
       if (!reviewsRes.ok) {
         const err = await reviewsRes.json().catch(() => ({}));
         throw new Error(err.error ?? "Failed to fetch reviews.");
@@ -149,6 +152,7 @@ export default function HomePage() {
 
       const summaryRes = await fetch(`/api/summary`, {
         method: "POST",
+        cache: "no-store",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ imdbID: trimmed, reviews: reviewsJson.reviews ?? [] })
       });
@@ -159,26 +163,6 @@ export default function HomePage() {
       const summaryJson = await summaryRes.json();
       setAiSummary(summaryJson.summary ?? null);
 
-      // Update recent analysis list (dedupe, keep latest first, max 5)
-      const statusLabel = sentimentPalette[sentJson.sentiment.label].label;
-      setRecent((prev) => {
-        const filtered = prev.filter((item) => item.imdbID !== trimmed);
-        const poster =
-          movieJson.poster && movieJson.poster !== "N/A"
-            ? movieJson.poster
-            : "https://via.placeholder.com/80x120?text=Poster";
-        const next = [
-          {
-            imdbID: trimmed,
-            title: movieJson.title || trimmed,
-            status: statusLabel,
-            ago: "just now",
-            poster
-          },
-          ...filtered
-        ];
-        return next.slice(0, 2);
-      });
     } catch (err: unknown) {
       console.error(err);
       const message = err instanceof Error ? err.message : "Something went wrong. Please try again.";
@@ -193,52 +177,35 @@ export default function HomePage() {
     [sentiment]
   );
 
+  const sentimentBreakdown = useMemo(() => {
+    const score = sentiment?.sentiment.score ?? 0; // -1 to 1
+    // Map score to approximate shares; keep totals ~100.
+    const positive = Math.min(100, Math.max(0, Math.round((score + 1) * 45))); // 0..90
+    const negative = Math.min(100, Math.max(0, Math.round((1 - score) * 20))); // 0..40
+    const mixed = Math.max(0, 100 - positive - negative);
+    return { positive, mixed, negative };
+  }, [sentiment]);
+
+  // Ensure date formatting happens only in the browser (client timezone) to avoid hydration mismatch.
+  useEffect(() => {
+    const next: Record<string, string> = {};
+    reviews.forEach((r) => {
+      if (!r.date) return;
+      const d = new Date(r.date);
+      next[r.id] = d.toLocaleDateString("en-US", {
+        month: "short",
+        day: "2-digit",
+        year: "numeric"
+      });
+    });
+    setFormattedDates(next);
+  }, [reviews]);
+
   return (
     <div className="layout">
-      <aside className="sidebar">
-        <div className="brand">
-          <div className="brand-icon">🎬</div>
-          <div>
-            <div className="brand-name">CineSight</div>
-            <div className="brand-sub">AI</div>
-          </div>
-        </div>
-
-        <div className="nav-group">
-          <div className="nav-label">Main Menu</div>
-          <button className="nav-item active">🎯 Movie Analysis</button>
-          <button className="nav-item">📈 Trending Insights</button>
-          <button className="nav-item">⚖️ Comparison Tool</button>
-          <button className="nav-item">🕑 History</button>
-        </div>
-
-        <div className="nav-group">
-          <div className="nav-label">Library</div>
-          <button className="nav-item">💾 Saved Reports</button>
-          <button className="nav-item">⭐ Favorites</button>
-        </div>
-
-        <div className="sidebar-card">
-          <div className="sidebar-card-top">
-            <div className="pill purple">PRO</div>
-            <div className="sidebar-card-title">Upgrade Plan</div>
-            <div className="sidebar-card-sub">Get unlimited AI analysis</div>
-          </div>
-          <button className="upgrade-btn">Upgrade Now</button>
-        </div>
-
-        <div className="user-tile">
-          <div className="avatar">A</div>
-          <div>
-            <div className="user-name">Alex Morgan</div>
-            <div className="user-email">alex@example.com</div>
-          </div>
-        </div>
-      </aside>
-
       <main className="main">
         <header className="topbar">
-          <div>
+          <div className="topbar-left">
             <div className="topbar-title">Movie Analysis</div>
             <div className="topbar-sub">AI-powered insights engine</div>
           </div>
@@ -247,12 +214,6 @@ export default function HomePage() {
             <div className="search">
               <span>🔍</span>
               <input placeholder="Search for movies..." />
-              <span className="kbd">⌘K</span>
-            </div>
-            <button className="notif">🔔</button>
-            <button className="notif">🧊</button>
-            <div className="status-chip">
-              <span className="dot live" /> Connected
             </div>
           </div>
         </header>
@@ -264,39 +225,32 @@ export default function HomePage() {
               Enter an IMDb ID to generate a comprehensive AI report.
             </div>
             <form className="analysis-form" onSubmit={handleSubmit} noValidate>
-              <div className="input-shell">
+              <div className={`input-shell ${formError ? "invalid" : ""}`}>
                 <span className="input-prefix">ID:</span>
                 <input
                   value={imdbID}
-                  onChange={(e) => setImdbID(e.target.value)}
+                  onChange={(e) => {
+                    const next = e.target.value;
+                    setImdbID(next);
+                    // Clear error live once input matches the expected pattern.
+                    if (formError && /^tt\d{7,}$/.test(next.trim())) {
+                      setFormError(null);
+                    }
+                  }}
                   placeholder="tt0133093"
+                  aria-invalid={!!formError}
+                  aria-describedby={formError ? "imdb-error" : undefined}
                 />
               </div>
               <button className="primary-btn" disabled={loading} type="submit">
                 {loading ? "Generating..." : "Generate Report"}
               </button>
             </form>
-            {formError && <div className="error">{formError}</div>}
-            {apiError && <div className="error">{apiError}</div>}
-          </div>
-
-          <div className="recent">
-            <div className="recent-title">Recent Analysis</div>
-            <div className="recent-list">
-              {recent.map((item) => (
-                <div key={`${item.imdbID}-${item.title}`} className="recent-row">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={item.poster} alt={item.title} />
-                  <div>
-                    <div className="recent-name">{item.title}</div>
-                    <div className="recent-meta">
-                      <span className="pill positive">{item.status}</span>
-                      <span className="ago">{item.ago}</span>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
+            {formError && (
+              <div id="imdb-error" className="error">
+                {formError}
+              </div>
+            )}
           </div>
         </section>
 
@@ -365,9 +319,9 @@ export default function HomePage() {
            <div className="card-block sentiment">
             <div className="card-head sentiment-head">
               <div>
-                <div className="card-title">Audience sentiment analysis </div>
+                <div className="card-title">AI Sentiment Analysis</div>
                 <div className="card-sub">
-                  Based on  audience reviews & critic comments
+                  Based on audience reviews & critic comments (Gemini-powered)
                 </div>
               </div>
               {sentimentMeta && (
@@ -381,32 +335,43 @@ export default function HomePage() {
             </div>
 
             <div className="sentiment-grid stat-row">
-              {[
-                { key: "positive", label: "Positive Sentiment", fallback: "89%", delta: "+2.1%" },
-                { key: "mixed", label: "Mixed Reactions", fallback: "8%", delta: "–" },
-                { key: "negative", label: "Negative Sentiment", fallback: "3%", delta: "-0.5%" }
-              ].map((item) => (
-                <div key={item.key} className="stat-card">
-                  <div className="stat-label">{item.label.toUpperCase()}</div>
-                  <div className="stat-value">
-                    {sentiment && item.key === sentiment.sentiment.label
-                      ? `${Math.round(sentiment.sentiment.score * 100)}%`
-                      : sentiment
-                      ? "—"
-                      : item.fallback}
-                  </div>
-                  <div
-                    className={`stat-delta ${
-                      item.delta.startsWith("-") ? "neg" : item.delta === "–" ? "muted" : "pos"
-                    }`}
-                  >
-                    {item.delta}
-                  </div>
-                  <div className="stat-bar">
-                    <span className={`fill ${item.key}`} />
-                  </div>
+              <div className="stat-card">
+                <div className="stat-label">POSITIVE SENTIMENT</div>
+                <div className="stat-value">{sentimentBreakdown.positive}%</div>
+                <div className="stat-delta pos">↑ 2.1%</div>
+                <div className="stat-bar">
+                  <span className="fill positive" style={{ width: `${Math.min(sentimentBreakdown.positive, 100)}%` }} />
                 </div>
-              ))}
+              </div>
+              <div className="stat-card">
+                <div className="stat-label">MIXED REACTIONS</div>
+                <div className="stat-value">{sentimentBreakdown.mixed}%</div>
+                <div className="stat-delta muted">—</div>
+                <div className="stat-bar">
+                  <span className="fill mixed" style={{ width: `${Math.min(sentimentBreakdown.mixed, 100)}%` }} />
+                </div>
+              </div>
+              <div className="stat-card">
+                <div className="stat-label">NEGATIVE SENTIMENT</div>
+                <div className="stat-value">{sentimentBreakdown.negative}%</div>
+                <div className="stat-delta neg">↓ 0.5%</div>
+                <div className="stat-bar">
+                  <span className="fill negative" style={{ width: `${Math.min(sentimentBreakdown.negative, 100)}%` }} />
+                </div>
+              </div>
+            </div>
+
+            <div className="consensus-card">
+              <div className="consensus-icon">🤖</div>
+              <div>
+                <div className="consensus-title">
+                  Audience Consensus Summary <span className="pill tiny">Gemini</span>
+                </div>
+                <p className="consensus-text">
+                  {aiSummary ||
+                    "Run an analysis to generate a concise AI summary based on the latest audience reviews."}
+                </p>
+              </div>
             </div>
 
           </div>
@@ -433,7 +398,7 @@ export default function HomePage() {
                 <div className="donut-inner">Topics</div>
               </div>
               <div className="topic-list">
-                {topicStats.map((t, i) => (
+                {topicStats.map((t) => (
                   <div key={t.label} className="topic-row">
                     <span
                       className="dot"
@@ -450,23 +415,6 @@ export default function HomePage() {
 
 
         <section className="card-block">
-          <div className="card-head">
-            <div className="card-title">AI summary of audience sentiment </div>
-          </div>
-          <div className="card-body">
-            {loading && <div className="skeleton" />}
-            {!loading && aiSummary && <div>{aiSummary}</div>}
-            {!loading && !aiSummary && (
-              <div className="muted">
-                Run an analysis to generate a concise AI summary based on audience reviews.
-              </div>
-            )}
-            {apiError && !loading && (
-              <div className="error" style={{ marginTop: "0.5rem" }}>
-                {apiError}
-              </div>
-            )}
-          </div>
         </section>
 
 
@@ -491,7 +439,7 @@ export default function HomePage() {
             <span>Reviewer</span>
             <span>Rating</span>
             <span>Sentiment Score</span>
-            <span>Key Phrase Extraction</span>
+            <span>Review</span>
             <span>Date</span>
           </div>
 
@@ -527,18 +475,36 @@ export default function HomePage() {
                     </span>
                   </div>
 
-                  <div className="cell phrases">
-                    {r.phrases.length
-                      ? r.phrases.map((p) => (
-                          <span key={p} className="phrase-chip">
-                            {p}
-                          </span>
-                        ))
-                      : <span className="muted">No key phrases</span>}
+                  <div className="cell phrases" style={{ alignItems: "flex-start" }}>
+                    <div
+                      style={{
+                        maxHeight: expandedReviews[r.id] ? "none" : "96px",
+                        overflow: "hidden",
+                        lineHeight: "1.4",
+                        width: "100%"
+                      }}
+                    >
+                      {r.content || <span className="muted">No review text</span>}
+                    </div>
+                    {r.content && r.content.length > 180 && (
+                      <button
+                        className="ghost-btn"
+                        style={{ marginTop: "0.25rem", padding: "0 0.5rem", fontSize: "0.85rem" }}
+                        onClick={() =>
+                          setExpandedReviews((prev) => ({
+                            ...prev,
+                            [r.id]: !prev[r.id]
+                          }))
+                        }
+                        type="button"
+                      >
+                        {expandedReviews[r.id] ? "Show less" : "Read more"}
+                      </button>
+                    )}
                   </div>
 
                   <div className="cell date">
-                    {r.date ? new Date(r.date).toLocaleDateString("en-US", { month: "short", day: "2-digit", year: "numeric" }) : "—"}
+                    {r.date ? formattedDates[r.id] ?? "—" : "—"}
                   </div>
                 </div>
               );

@@ -1,7 +1,20 @@
 import { NextResponse } from "next/server";
 
-const TMDB_API_KEY = process.env.TMDB_API_KEY;
-const TMDB_BASE = "https://api.themoviedb.org/3";
+const OMDB_API_KEY = process.env.OMDB_API_KEY;
+
+async function fetchWithTimeout(
+  url: string,
+  init: RequestInit & { timeoutMs?: number } = {}
+) {
+  const { timeoutMs = 8000, ...rest } = init;
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...rest, signal: controller.signal });
+  } finally {
+    clearTimeout(id);
+  }
+}
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
@@ -21,109 +34,55 @@ export async function GET(request: Request) {
     );
   }
 
-  if (!TMDB_API_KEY) {
+  if (!OMDB_API_KEY) {
     return NextResponse.json(
-      { error: "TMDB API key not configured on server." },
+      { error: "OMDB API key not configured on server." },
       { status: 500 }
     );
   }
 
   try {
-    // Step 1: Resolve IMDb → TMDB ID
-    const findRes = await fetch(
-      `${TMDB_BASE}/find/${encodeURIComponent(
+    const res = await fetchWithTimeout(
+      `https://www.omdbapi.com/?apikey=${OMDB_API_KEY}&i=${encodeURIComponent(
         imdbID
-      )}?api_key=${TMDB_API_KEY}&external_source=imdb_id`,
-      { next: { revalidate: 300 } }
+      )}&plot=short`,
+      { timeoutMs: 8000 }
     );
 
-    if (!findRes.ok) {
-      throw new Error(`TMDB find failed with ${findRes.status}`);
+    if (!res.ok) {
+      return NextResponse.json(
+        { error: `OMDb request failed with status ${res.status}` },
+        { status: 502 }
+      );
     }
 
-    const findJson = await findRes.json();
-    const movieMatch = findJson.movie_results?.[0];
-    const tvMatch = findJson.tv_results?.[0];
-    const match = movieMatch || tvMatch;
+    const data = await res.json();
 
-    if (!match?.id) {
+    if (data.Response === "False") {
       return NextResponse.json(
-        { error: "No TMDB match found for that IMDb ID." },
+        { error: data.Error ?? "Movie not found for given IMDb ID." },
         { status: 404 }
       );
     }
 
-    const isTv = Boolean(tvMatch);
-    const detailsEndpoint = isTv ? "tv" : "movie";
-
-    // Step 2: Fetch full details (including credits for cast/crew)
-    const detailsRes = await fetch(
-      `${TMDB_BASE}/${detailsEndpoint}/${match.id}?api_key=${TMDB_API_KEY}&language=en-US&append_to_response=credits`,
-      { next: { revalidate: 300 } }
-    );
-
-    if (!detailsRes.ok) {
-      throw new Error(`TMDB details failed with ${detailsRes.status}`);
-    }
-
-    const details = await detailsRes.json();
-
-    const credits = details.credits ?? {};
-    const directors =
-      credits.crew
-        ?.filter((c: { job?: string }) => c.job === "Director")
-        .map((c: { name?: string }) => c.name)
-        .filter(Boolean)
-        .slice(0, 3)
-        .join(", ") || "";
-
-    const writers =
-      credits.crew
-        ?.filter((c: { job?: string }) =>
-          ["Writer", "Screenplay", "Story", "Author"].includes(c.job ?? "")
-        )
-        .map((c: { name?: string }) => c.name)
-        .filter(Boolean)
-        .slice(0, 3)
-        .join(", ") || "";
-
-    const cast =
-      credits.cast
-        ?.slice(0, 10)
-        .map((c: { name?: string }) => c.name)
-        .filter(Boolean)
-        .join(", ") || "";
-
     return NextResponse.json({
       imdbID,
-      title: details.title || details.name || "Unknown title",
-      year:
-        (details.release_date || details.first_air_date || "").slice(0, 4) ||
-        "N/A",
-      rated: details.adult ? "R" : "PG-13",
-      runtime: details.runtime ? `${details.runtime} min` : "N/A",
-      genre:
-        details.genres?.map((g: { name: string }) => g.name).join(", ") || "N/A",
-      director: directors || "Unknown",
-      writer: writers || "Unknown",
-      cast: cast || "N/A",
-      plot: details.overview || "No plot summary available.",
-      language: (details.original_language || "N/A").toUpperCase(),
-      country:
-        details.production_countries
-          ?.map((c: { name: string }) => c.name)
-          .join(", ") || "N/A",
-      awards: "—",
-      poster: details.poster_path
-        ? `https://image.tmdb.org/t/p/w500${details.poster_path}`
-        : "N/A",
-      imdbRating: details.vote_average
-        ? Number(details.vote_average).toFixed(1)
-        : "N/A",
-      imdbVotes: details.vote_count
-        ? Number(details.vote_count).toLocaleString("en-US")
-        : "N/A",
-      type: isTv ? "series" : "movie"
+      title: data.Title,
+      year: data.Year,
+      rated: data.Rated,
+      runtime: data.Runtime,
+      genre: data.Genre,
+      director: data.Director,
+      writer: data.Writer,
+      cast: data.Actors,
+      plot: data.Plot,
+      language: data.Language,
+      country: data.Country,
+      awards: data.Awards,
+      poster: data.Poster,
+      imdbRating: data.imdbRating,
+      imdbVotes: data.imdbVotes,
+      type: data.Type
     });
   } catch (err) {
     console.error("Movie lookup error:", err);
@@ -134,7 +93,7 @@ export async function GET(request: Request) {
             ? err.message
             : "Unexpected server error while fetching movie metadata."
       },
-      { status: 500 }
+      { status: 502 }
     );
   }
 }
