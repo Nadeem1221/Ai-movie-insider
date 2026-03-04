@@ -138,7 +138,7 @@ export async function GET(req: NextRequest) {
           rating: null,
           content:
             "No user reviews are available for this movie yet. Be the first to share your thoughts about it!",
-          date: " ",
+          date: "",
           phrases: []
         }
       ];

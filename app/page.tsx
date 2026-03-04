@@ -265,6 +265,11 @@ export default function HomePage() {
                 {formError}
               </div>
             )}
+            {apiError && (
+              <div className="error" role="alert" style={{ marginTop: "8px" }}>
+                {apiError}
+              </div>
+            )}
           </div>
         </section>
 
