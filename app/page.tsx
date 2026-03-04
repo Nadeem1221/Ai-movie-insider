@@ -201,6 +201,20 @@ export default function HomePage() {
     setFormattedDates(next);
   }, [reviews]);
 
+  const heroBackgroundStyle = useMemo(() => {
+    if (movie?.poster && movie.poster !== "N/A") {
+      return {
+        backgroundImage: `linear-gradient(115deg, rgba(10,16,36,0.92) 0%, rgba(13,26,64,0.85) 55%, rgba(12,14,30,0.78) 100%), url(${movie.poster})`
+      };
+    }
+    return {
+      backgroundImage:
+        "linear-gradient(115deg, rgba(10,16,36,0.95) 0%, rgba(16,36,94,0.82) 55%, rgba(12,14,30,0.78) 100%)"
+    };
+  }, [movie?.poster]);
+
+  const primaryGenre = movie?.genre?.split(",")[0]?.trim();
+
   return (
     <div className="layout">
       <main className="main">
@@ -254,31 +268,55 @@ export default function HomePage() {
           </div>
         </section>
 
-        <section className="hero-card">
-          <div className="hero-art">
-            {movie?.poster && movie.poster !== "N/A" ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={movie.poster} alt={`${movie.title} poster`} />
-            ) : (
-              <div className="hero-placeholder">Poster</div>
-            )}
-          </div>
-          <div className="hero-body">
-            <div className="hero-meta">
-              <span className="pill dark">{movie?.rated || "PG"}</span>
-              <span className="pill outline">{movie?.year || "1999"}</span>
-              <span className="pill outline">{movie?.runtime || "2h 16m"}</span>
-              <span className="pill outline">{movie?.genre || "Sci-fi"}</span>
+        <section className="hero-card" style={heroBackgroundStyle}>
+          <div className="hero-overlay">
+            <div className="hero-art">
+              {movie?.poster && movie.poster !== "N/A" ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={movie.poster} alt={`${movie.title} poster`} />
+              ) : (
+                <div className="hero-placeholder">Poster</div>
+              )}
             </div>
-            <div className="hero-title">{movie?.title || "Awaiting selection"}</div>
-            <div className="hero-sub">
-              {movie
-                ? `${movie.genre} • ${movie.director || "Unknown"}`
-                : "Pick a movie to see AI insights"}
-            </div>
-            <div className="hero-actions">
-              <button className="secondary-btn">▶ Watch Trailer</button>
-              <button className="ghost-btn">Share</button>
+
+            <div className="hero-body">
+              <div className="hero-meta">
+                <span className="pill dark">{movie?.rated || "PG"}</span>
+                <span className="pill outline">{movie?.year || "1999"}</span>
+                <span className="pill outline">{movie?.runtime || "2h 16m"}</span>
+                {primaryGenre && <span className="pill outline">{primaryGenre}</span>}
+              </div>
+
+              <div className="hero-title">{movie?.title || "Awaiting selection"}</div>
+              <div className="hero-sub">
+                {movie
+                  ? movie.plot && movie.plot !== "N/A"
+                    ? movie.plot
+                    : `${movie.genre} • ${movie.director || "Unknown"}`
+                  : "Pick a movie to see AI insights"}
+              </div>
+
+              <div className="hero-stats">
+                <div className="stat-chip">
+                  <span className="icon">⭐</span>
+                  <div>
+                    <div className="stat-value">{movie?.imdbRating || "8.7"}</div>
+                    <div className="stat-label">IMDb rating</div>
+                  </div>
+                </div>
+                <div className="stat-chip">
+                  <span className="icon">🔥</span>
+                  <div>
+                    <div className="stat-value">{movie?.imdbVotes || "96%"}</div>
+                    <div className="stat-label">Popularity</div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="hero-actions">
+                <button className="primary-btn solid">▶ Watch Trailer</button>
+                <button className="ghost-btn dark">Share</button>
+              </div>
             </div>
           </div>
         </section>
