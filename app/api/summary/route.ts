@@ -7,25 +7,27 @@ type Review = {
 };
 
 const GEMINI_API_KEY = process.env.GOOGLE_GEMINI_API_KEY;
-const GEMINI_MODEL = process.env.GOOGLE_GEMINI_MODEL?.trim();
-// Gemini 2.5 models live under v1; allow override via env.
-const GEMINI_VERSION = process.env.GOOGLE_GEMINI_VERSION?.trim() || "v1";
-const GEMINI_ENDPOINT =
-  GEMINI_MODEL && GEMINI_MODEL.length
-    ? `https://generativelanguage.googleapis.com/${GEMINI_VERSION}/models/${GEMINI_MODEL}:generateContent`
-    : null;
+const GEMINI_MODEL = process.env.GOOGLE_GEMINI_MODEL ;
+const GEMINI_VERSION = "v1beta" ;
+
+const GEMINI_ENDPOINT = `https://generativelanguage.googleapis.com/${GEMINI_VERSION}/models/${GEMINI_MODEL}:generateContent`;
+
+console.log("MODEL:", GEMINI_MODEL);
+console.log("ENDPOINT:", GEMINI_ENDPOINT);
 
 function buildFallbackSummary(items: Review[]): string {
   if (!items.length) {
-    return "No audience reviews are available yet, so we couldn't generate an AI summary.";
+    return "No audience reviews available to generate an AI summary.";
   }
 
   const ratings = items
     .map((r) => (typeof r.rating === "number" ? r.rating : null))
     .filter((n): n is number => n !== null);
+
   const avgRating = ratings.length
     ? Number((ratings.reduce((a, b) => a + b, 0) / ratings.length).toFixed(1))
     : null;
+
   const tone =
     avgRating === null
       ? "mixed"
@@ -35,47 +37,21 @@ function buildFallbackSummary(items: Review[]): string {
       ? "negative"
       : "mixed";
 
-  const phrases = items
-    .flatMap((r) => r.phrases || [])
-    .map((p) => p.trim())
-    .filter(Boolean);
-  const counts: Record<string, number> = {};
-  for (const p of phrases) counts[p.toLowerCase()] = (counts[p.toLowerCase()] || 0) + 1;
-  const topPhrases = Object.entries(counts)
-    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-    .slice(0, 4)
-    .map(([p]) => p);
-
   const snippets = items
     .map((r) => String(r.content || "").trim())
     .filter((t) => t.length > 0);
+
   const snippet = snippets[0]?.slice(0, 180) || "";
 
-  const lines = [
-    `Overall audience tone appears ${tone}${avgRating ? ` (avg rating ~${avgRating}/10)` : ""} based on ${items.length} reviews.`,
-    topPhrases.length ? `Common themes: ${topPhrases.join(", ")}.` : "",
-    snippet ? `Representative comment: "${snippet}${snippet.length >= 180 ? "..." : ""}".` : ""
-  ].filter(Boolean);
-
-  return lines.join(" ");
+  return `Audience sentiment appears ${tone}${
+    avgRating ? ` (average rating ~${avgRating}/10)` : ""
+  }. Example comment: "${snippet}${snippet.length >= 180 ? "..." : ""}"`;
 }
 
 export async function POST(req: Request) {
   if (!GEMINI_API_KEY) {
     return NextResponse.json(
-      { error: "GOOGLE_GEMINI_API_KEY not configured on server." },
-      { status: 500 }
-    );
-  }
-  if (!GEMINI_MODEL) {
-    return NextResponse.json(
-      { error: "GOOGLE_GEMINI_MODEL not configured on server." },
-      { status: 500 }
-    );
-  }
-  if (!GEMINI_ENDPOINT) {
-    return NextResponse.json(
-      { error: "Gemini endpoint could not be built from env vars." },
+      { error: "GOOGLE_GEMINI_API_KEY not configured." },
       { status: 500 }
     );
   }
@@ -84,32 +60,40 @@ export async function POST(req: Request) {
 
   try {
     const body = await req.json().catch(() => ({}));
-    const { imdbID, reviews } = body as { imdbID?: string; reviews?: Review[] };
+    const { imdbID, reviews } = body as {
+      imdbID?: string;
+      reviews?: Review[];
+    };
 
     if (!imdbID) {
       return NextResponse.json(
-        { error: "Missing imdbID in request body." },
+        { error: "Missing imdbID in request." },
         { status: 400 }
       );
     }
 
-    // If no reviews supplied, pull them from TMDB-backed reviews API (no caching).
+    // Use provided reviews
     items = Array.isArray(reviews) ? reviews.slice(0, 8) : [];
+
+    // If no reviews, fetch them
     if (!items.length) {
-      const origin = new URL(req.url).origin;
       try {
+        const origin = new URL(req.url).origin;
+
         const revRes = await fetch(
           `${origin}/api/reviews?imdbID=${encodeURIComponent(imdbID)}`,
           { cache: "no-store" }
         );
+
         if (revRes.ok) {
           const revJson = await revRes.json();
-          const fetched = Array.isArray(revJson.reviews) ? revJson.reviews : [];
+          const fetched = Array.isArray(revJson.reviews)
+            ? revJson.reviews
+            : [];
           items = fetched.slice(0, 8);
         }
       } catch (err) {
-        // swallow and rely on fallbacks below
-        console.error("Summary route could not fetch /api/reviews:", err);
+        console.error("Could not fetch reviews:", err);
       }
     }
 
@@ -120,60 +104,88 @@ export async function POST(req: Request) {
               (r, i) =>
                 `${i + 1}. Rating: ${
                   r.rating ?? "N/A"
-                }, Excerpt: ${String(r.content || "").slice(0, 320)}`
+                } | Review: ${String(r.content).slice(0, 300)}`
             )
             .join("\n")
-        : "No review texts supplied.";
+        : "No reviews available.";
 
-    const prompt = [
-      "You are an analyst summarizing audience sentiment for a film based on several short reviews.",
-      "Write 3 concise bullet sentences highlighting overall tone, common praise/complaints, and notable keywords.",
-      "Be neutral and avoid spoilers.",
-      `IMDb ID: ${imdbID}`,
-      "Reviews:",
-      reviewText
-    ].join("\n");
+    const prompt = `
+You are an AI movie critic.
 
-    const res = await fetch(`${GEMINI_ENDPOINT}?key=${GEMINI_API_KEY}`, {
+Analyze the following audience reviews and generate a short summary.
+
+Rules:
+- Write exactly 3 bullet points
+- Mention overall audience sentiment
+- Mention common praise or complaints
+- Mention recurring themes or keywords
+- Avoid spoilers
+
+Movie IMDb ID: ${imdbID}
+
+Reviews:
+${reviewText}
+`;
+
+    console.log("Sending reviews to Gemini:", items.length);
+
+    const geminiRes = await fetch(`${GEMINI_ENDPOINT}?key=${GEMINI_API_KEY}`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+      },
       body: JSON.stringify({
-        contents: [{ role: "user", parts: [{ text: prompt }] }],
-        generationConfig: { temperature: 0.3, maxOutputTokens: 200 }
-      })
+        contents: [
+          {
+            role: "user",
+            parts: [{ text: prompt }],
+          },
+        ],
+        generationConfig: {
+          temperature: 0.3,
+          maxOutputTokens: 200,
+        },
+      }),
     });
 
-    if (!res.ok) {
-      const err = await res.text();
-      // 404 likely means model/version mismatch; no fallback caching here.
+    if (!geminiRes.ok) {
+      const errText = await geminiRes.text();
       throw new Error(
-        `Gemini API error ${res.status}: ${err.slice(0, 400)} (endpoint: ${GEMINI_ENDPOINT})`
+        `Gemini API error ${geminiRes.status}: ${errText.slice(0, 300)}`
       );
     }
 
-    const json = await res.json();
-    const text: string =
-      json?.candidates?.[0]?.content?.parts?.[0]?.text?.trim?.() ?? "";
+    const data = await geminiRes.json();
+
+    console.log("Gemini response:", JSON.stringify(data, null, 2));
+
+    const aiText =
+      data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim?.() || "";
+
     const fallback = buildFallbackSummary(items);
-    const finalSummary = text && text.length > 10 ? text : fallback;
+
+    const finalSummary = aiText.length > 10 ? aiText : fallback;
 
     return NextResponse.json({
       imdbID,
       summary: finalSummary,
-      reviewsUsed: items.length
+      reviewsUsed: items.length,
+      source: aiText ? "gemini" : "fallback",
     });
-  } catch (err) {
-    console.error("Gemini summary error:", err);
+  } catch (error) {
+    console.error("AI summary error:", error);
+
     const fallback = buildFallbackSummary(items);
+
     return NextResponse.json(
       {
         error:
-          err instanceof Error ? err.message : "Unexpected error from Gemini.",
+          error instanceof Error ? error.message : "Unexpected AI error",
         summary: fallback,
         reviewsUsed: items.length,
-        source: "fallback"
+        source: "fallback",
       },
-      { status: 200, headers: { "x-warning": "gemini-fallback" } }
+      { status: 200 }
     );
   }
 }

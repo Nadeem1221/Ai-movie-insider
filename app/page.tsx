@@ -65,6 +65,14 @@ export default function HomePage() {
   const [expandedReviews, setExpandedReviews] = useState<Record<string, boolean>>({});
   const [formattedDates, setFormattedDates] = useState<Record<string, string>>({});
 
+  const aiSummaryLines = useMemo(() => {
+    if (!aiSummary) return [];
+    return aiSummary
+      .split(/\r?\n+/)
+      .map((line) => line.replace(/^[-•]\s*/, "").trim())
+      .filter(Boolean);
+  }, [aiSummary]);
+
   const topicStats = useMemo(() => {
     const counts: Record<string, number> = {};
     reviews.forEach((r) => {
@@ -425,10 +433,21 @@ export default function HomePage() {
                 <div className="consensus-title">
                   Audience Consensus Summary <span className="pill tiny">Gemini</span>
                 </div>
-                <p className="consensus-text">
-                  {aiSummary ||
-                    "Run an analysis to generate a concise AI summary based on the latest audience reviews."}
-                </p>
+                {aiSummary ? (
+                  aiSummaryLines.length > 1 ? (
+                    <ul className="consensus-list">
+                      {aiSummaryLines.map((line, idx) => (
+                        <li key={idx}>{line}</li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="consensus-text">{aiSummary}</p>
+                  )
+                ) : (
+                  <p className="consensus-text">
+                    Run an analysis to generate a concise AI summary based on the latest audience reviews.
+                  </p>
+                )}
               </div>
             </div>
 
