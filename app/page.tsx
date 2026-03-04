@@ -296,6 +296,21 @@ export default function HomePage() {
                   : "Pick a movie to see AI insights"}
               </div>
 
+              <div className="hero-details">
+                <span className="detail-pill">
+                  <strong>Genre:</strong> {movie?.genre || "—"}
+                </span>
+                <span className="detail-pill">
+                  <strong>Director:</strong> {movie?.director || "—"}
+                </span>
+                <span className="detail-pill">
+                  <strong>Language:</strong> {movie?.language || "—"}
+                </span>
+                <span className="detail-pill">
+                  <strong>Type:</strong> {movie?.type || "—"}
+                </span>
+              </div>
+
               <div className="hero-stats">
                 <div className="stat-chip">
                   <span className="icon">⭐</span>

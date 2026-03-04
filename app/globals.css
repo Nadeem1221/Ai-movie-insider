@@ -79,6 +79,9 @@ body { margin: 0; background: var(--bg); color: var(--text); }
 .hero-meta { display: flex; gap: 8px; flex-wrap: wrap; }
 .hero-title { font-size: 34px; font-weight: 900; color: #fff; letter-spacing: -0.02em; }
 .hero-sub { color: #cbd5e1; line-height: 1.6; max-width: 720px; }
+.hero-details { display: flex; flex-wrap: wrap; gap: 8px; }
+.detail-pill { background: rgba(255,255,255,0.08); color: #e2e8f0; border: 1px solid rgba(255,255,255,0.16); padding: 6px 10px; border-radius: 10px; font-size: 12px; }
+.detail-pill strong { color: #fff; margin-right: 4px; }
 .hero-stats { display: flex; gap: 14px; flex-wrap: wrap; }
 .stat-chip { display: inline-flex; align-items: center; gap: 10px; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); padding: 10px 12px; border-radius: 12px; }
 .stat-chip .icon { font-size: 16px; }

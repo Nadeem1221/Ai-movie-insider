@@ -22,6 +22,7 @@ async function fetchWithTimeout(
   const { timeoutMs = 15000, ...rest } = init;
   const controller = new AbortController();
   const id = setTimeout(() => controller.abort(), timeoutMs);
+
   try {
     return await fetch(url, { ...rest, signal: controller.signal });
   } finally {
@@ -56,11 +57,11 @@ function extractKeyPhrases(text: string, max = 3): string[] {
 
 export async function GET(req: NextRequest) {
   const imdbID = req.nextUrl.searchParams.get("imdbID");
+
   if (!imdbID) {
     return NextResponse.json({ error: "Missing imdbID" }, { status: 400 });
   }
 
-  // Basic IMDb ID shape check (e.g., tt1234567). Prevents wasted TMDB calls on clearly bad input.
   const imdbIdPattern = /^tt\d{7,}$/;
   if (!imdbIdPattern.test(imdbID)) {
     return NextResponse.json(
@@ -70,45 +71,84 @@ export async function GET(req: NextRequest) {
   }
 
   const apiKey = process.env.TMDB_API_KEY;
+
   if (!apiKey) {
-    return NextResponse.json({ error: "TMDB_API_KEY missing on server" }, { status: 500 });
+    return NextResponse.json(
+      { error: "TMDB_API_KEY missing on server" },
+      { status: 500 }
+    );
   }
 
   try {
+    // Get TMDB ID from IMDb ID
     const findRes = await fetchWithTimeout(
       `${TMDB_BASE}/find/${encodeURIComponent(imdbID)}?api_key=${apiKey}&external_source=imdb_id`,
       { next: { revalidate: 60 }, timeoutMs: 8000 }
     );
+
     if (!findRes.ok) throw new Error("Failed to resolve TMDB ID");
+
     const findJson = await findRes.json();
     const tmdbId = findJson?.movie_results?.[0]?.id;
+
     if (!tmdbId) throw new Error("No TMDB match for that IMDb ID");
 
-    const reviewsRes = await fetchWithTimeout(
-      `${TMDB_BASE}/movie/${tmdbId}/reviews?api_key=${apiKey}&language=en-US&page=1`,
-      { next: { revalidate: 60 }, timeoutMs: 8000 }
-    );
-    if (!reviewsRes.ok) throw new Error("Failed to fetch reviews");
-    const reviewsJson = await reviewsRes.json();
+    // Fetch multiple pages of reviews
+    const allReviews: TMDBReview[] = [];
 
-    const reviews = (reviewsJson.results as TMDBReview[] | undefined ?? []).slice(0, 6).map((r) => ({
+    for (let page = 1; page <= 3; page++) {
+      const reviewsRes = await fetchWithTimeout(
+        `${TMDB_BASE}/movie/${tmdbId}/reviews?api_key=${apiKey}&language=en-US&page=${page}`,
+        { next: { revalidate: 60 }, timeoutMs: 8000 }
+      );
+
+      if (!reviewsRes.ok) break;
+
+      const reviewsJson = await reviewsRes.json();
+      const pageReviews = reviewsJson.results as TMDBReview[];
+
+      if (!pageReviews || pageReviews.length === 0) break;
+
+      allReviews.push(...pageReviews);
+
+      if (allReviews.length >= 10) break;
+    }
+
+    let reviews = allReviews.slice(0, 10).map((r) => ({
       id: r.id,
       author: r.author,
       role: r.author_details?.username ? "Verified User" : "Contributor",
-      avatar:
-        r.author_details?.avatar_path
-          ? `https://image.tmdb.org/t/p/w185${r.author_details.avatar_path}`
-          : "https://i.pravatar.cc/80?u=" + r.author,
+      avatar: r.author_details?.avatar_path
+        ? `https://image.tmdb.org/t/p/w185${r.author_details.avatar_path}`
+        : "https://i.pravatar.cc/80?u=" + r.author,
       rating: r.author_details?.rating ?? null,
       content: r.content,
       date: r.updated_at || r.created_at,
       phrases: extractKeyPhrases(r.content || "", 3)
     }));
 
+    // Fallback if no reviews exist
+    if (reviews.length === 0) {
+      reviews = [
+        {
+          id: "fallback-review",
+          author: "Audience",
+          role: "Movie Viewer",
+          avatar: "https://i.pravatar.cc/80",
+          rating: null,
+          content:
+            "No user reviews are available for this movie yet. Be the first to share your thoughts about it!",
+          date: " ",
+          phrases: []
+        }
+      ];
+    }
+
     return NextResponse.json({ tmdbId, reviews });
+
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Unknown error";
-    // Return empty reviews instead of error to keep UI rendering.
+
     return NextResponse.json(
       { tmdbId: null, reviews: [], warning: message },
       { status: 200, headers: { "x-warning": message } }
